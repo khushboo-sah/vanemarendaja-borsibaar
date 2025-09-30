@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/organizations")
 @RequiredArgsConstructor
@@ -24,6 +26,11 @@ public class OrganizationController {
     @GetMapping("/{id}")
     public OrganizationResponseDto get(@PathVariable Long id) {
         return organizationService.getById(id);
+    }
+
+    @GetMapping
+    public List<OrganizationResponseDto> getAll() {
+        return organizationService.getAll();
     }
 
 }

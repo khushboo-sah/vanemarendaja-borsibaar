@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 @Service
 public class OrganizationService {
@@ -38,5 +39,17 @@ public class OrganizationService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Organization not found: " + id));
         return organizationMapper.toResponse(organization);
+    }
+
+    public List<OrganizationResponseDto> getAll() {
+        return organizationRepository.findAll()
+                .stream()
+                .map(org -> new OrganizationResponseDto(
+                        org.getId(),
+                        org.getName(),
+                        org.getCreatedAt(),
+                        org.getUpdatedAt()
+                ))
+                .toList();
     }
 }
