@@ -6,10 +6,10 @@ variables:
   SSH_USER: "ubuntu"
   SERVER_IP: "193.40.157.19"
   DEPLOY_PATH: "/srv/borsibaar"
-  DOCKER_COMPOSE_FILE: "docker-compose.yaml"
+  DOCKER_COMPOSE_FILE: "docker-compose.prod.yaml"
 
 before_script:
-  - 'which ssh-agent || apk add --no-cache openssh-client'
+  - "which ssh-agent || apk add --no-cache openssh-client"
   - eval $(ssh-agent -s)
   - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - > /dev/null
   - mkdir -p ~/.ssh
@@ -38,10 +38,7 @@ build-frontend:
     - npm run build
   artifacts:
     paths:
-      - frontend/.next/
-      - frontend/public/
-      - frontend/package.json
-      - frontend/package-lock.json
+      - frontend/out/
     expire_in: 1 hour
   only:
     - main
@@ -54,47 +51,66 @@ deploy-job:
     - build-frontend
   script:
     - echo "Starting deployment..."
-    
+
     # Install required tools
     - apk add --no-cache tar
 
     # Copy the env file from GitLab CI/CD variable to current directory
     - cp $ENV_PRODUCTION_FILE .env.production
-    
+
     # Create deployment package
-    - tar czf deployment.tar.gz backend/target/*.jar frontend/.next/ frontend/public/ frontend/package*.json docker-compose.prod.yaml backend/Dockerfile .env.production
-    
+    - tar czf deployment.tar.gz backend/target/*.jar frontend/ nginx/ docker-compose.prod.yaml backend/Dockerfile frontend/Dockerfile .env.production
+
     # Copy to server
     - scp deployment.tar.gz $SSH_USER@$SERVER_IP:/tmp/
-    
+
     # Deploy on server
     - |
-        ssh $SSH_USER@$SERVER_IP << EOF
-        set -e
-        cd $DEPLOY_PATH
-        
-        # Extract deployment package
-        tar xzf /tmp/deployment.tar.gz
-        rm /tmp/deployment.tar.gz
-        
-        # Copy environment file if exists
-        if [ -f .env.production ]; then
-          cp .env.production .env
-        fi
-        
-        # Stop existing containers
-        docker-compose down
-        
-        # Rebuild and start containers
-        docker-compose build --no-cache
-        docker-compose up -d
-        
-        # Clean up old images
-        docker image prune -f
-        
-        echo "Deployment complete!"
-        docker-compose ps
-        EOF
+      ssh $SSH_USER@$SERVER_IP << EOF
+      set -e
+      cd $DEPLOY_PATH
+
+      # Extract deployment package
+      tar xzf /tmp/deployment.tar.gz
+      rm /tmp/deployment.tar.gz
+
+      # Check if docker-compose.prod.yaml exists
+      if [ ! -f $DOCKER_COMPOSE_FILE ]; then
+        echo "ERROR: $DOCKER_COMPOSE_FILE not found!"
+        exit 1
+      fi
+
+       # Copy environment file if exists
+       if [ -f .env.production ]; then
+         cp .env.production .env
+       fi
+
+       # Copy SSL certificates from Let's Encrypt to project directory
+       # Currently doing this manually in the server
+      #  sudo mkdir -p nginx/ssl
+      #  sudo cp -rL /etc/letsencrypt/live/borsibaar.zapto.org/* nginx/ssl/
+      #  sudo chmod -R 644 nginx/ssl/*
+      #  sudo chown -R $USER:$USER nginx/ssl/
+
+       # Clean/repair builder cache and avoid BuildKit flakiness
+      sudo systemctl restart docker
+      docker buildx prune -af || true
+      docker builder prune -af || true
+      docker image prune -af || true
+
+      # Stop existing containers
+      docker-compose -f $DOCKER_COMPOSE_FILE down
+
+       # Rebuild and start containers
+       docker-compose -f $DOCKER_COMPOSE_FILE build --no-cache
+       docker-compose -f $DOCKER_COMPOSE_FILE up -d
+
+       # Clean up old images
+       docker image prune -f
+
+      echo "Deployment complete!"
+      docker-compose -f $DOCKER_COMPOSE_FILE ps
+      EOF
   environment:
     name: production
     url: http://$SERVER_IP
