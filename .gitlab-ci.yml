@@ -4,7 +4,7 @@ stages:
 
 variables:
   SSH_USER: "ubuntu"
-  SERVER_IP: "193.40.157.19"
+  SERVER_IP: "52.91.55.250"
   DEPLOY_PATH: "/srv/borsibaar"
   DOCKER_COMPOSE_FILE: "docker-compose.prod.yaml"
 
@@ -55,8 +55,8 @@ deploy-job:
     # Install required tools
     - apk add --no-cache tar
 
-    # Copy the env file from GitLab CI/CD variable to current directory
-    - cp $ENV_PRODUCTION_FILE .env.production
+    # Create env file from GitLab variable (FIXED)
+    - echo "$ENV_PRODUCTION_FILE" > .env.production
 
     # Create deployment package
     - tar czf deployment.tar.gz backend/target/*.jar frontend/ nginx/ docker-compose.prod.yaml backend/Dockerfile frontend/Dockerfile .env.production
@@ -68,49 +68,39 @@ deploy-job:
     - |
       ssh $SSH_USER@$SERVER_IP << EOF
       set -e
+
+      mkdir -p $DEPLOY_PATH
       cd $DEPLOY_PATH
+
+      # Clean old files
+      rm -rf *
 
       # Extract deployment package
       tar xzf /tmp/deployment.tar.gz
       rm /tmp/deployment.tar.gz
 
-      # Check if docker-compose.prod.yaml exists
-      if [ ! -f $DOCKER_COMPOSE_FILE ]; then
-        echo "ERROR: $DOCKER_COMPOSE_FILE not found!"
-        exit 1
+      # Copy environment file if exists
+      if [ -f .env.production ]; then
+        cp .env.production .env
       fi
 
-       # Copy environment file if exists
-       if [ -f .env.production ]; then
-         cp .env.production .env
-       fi
-
-       # Copy SSL certificates from Let's Encrypt to project directory
-       # Currently doing this manually in the server
-      #  sudo mkdir -p nginx/ssl
-      #  sudo cp -rL /etc/letsencrypt/live/borsibaar.zapto.org/* nginx/ssl/
-      #  sudo chmod -R 644 nginx/ssl/*
-      #  sudo chown -R $USER:$USER nginx/ssl/
-
-       # Clean/repair builder cache and avoid BuildKit flakiness
-      sudo systemctl restart docker
-      docker buildx prune -af || true
-      docker builder prune -af || true
-      docker image prune -af || true
+      # Restart docker to avoid cache issues
+      sudo systemctl restart docker || true
 
       # Stop existing containers
-      docker-compose -f $DOCKER_COMPOSE_FILE down
+      docker-compose -f $DOCKER_COMPOSE_FILE down || true
 
-       # Rebuild and start containers
-       docker-compose -f $DOCKER_COMPOSE_FILE build --no-cache
-       docker-compose -f $DOCKER_COMPOSE_FILE up -d
+      # Rebuild and start containers
+      docker-compose -f $DOCKER_COMPOSE_FILE build
+      docker-compose -f $DOCKER_COMPOSE_FILE up -d
 
-       # Clean up old images
-       docker image prune -f
+      # Clean up old images
+      docker image prune -f
 
       echo "Deployment complete!"
       docker-compose -f $DOCKER_COMPOSE_FILE ps
       EOF
+
   environment:
     name: production
     url: http://$SERVER_IP
